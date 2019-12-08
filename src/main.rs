@@ -39,8 +39,7 @@ pub struct ECA {
     width : u32,
     height : u32,
     initial_configuration : Vec<u8>,
-    current_configuration : Vec<u8>,
-    universe : Vec<Vec<u8>>,
+    universe : Vec<u8>
 }
 
 impl ECA {
@@ -49,28 +48,107 @@ impl ECA {
 
         // default state
         let mut initial_configuration : Vec<u8> = vec![0; width as usize];
+
+        // todo, rewrite new to pass in the initial config
         initial_configuration[(width / 2) as usize] = 1;
+
+        // initialize universe with initial configuration
+        let mut universe : Vec<u8> = vec![0; (width * height) as usize];
+
+        for (index, cell) in initial_configuration.iter().enumerate() {
+            universe[index] = *cell;
+        }
 
         return ECA {
             rule : rule,
             width : width,
             height : height,
             initial_configuration : initial_configuration.clone(),
-            current_configuration : initial_configuration,
-            universe : Vec::new(),
+            universe : universe
         };
     }
 
-    pub fn generate(&mut self, height : u32) {
-        // println!{"{}", self};
-        self.universe.push(self.current_configuration.clone());
+    pub fn get_value(&self, row_index : u32, column_index : u32) -> u8{
+        return self.universe[(row_index * self.width + column_index) as usize];
+    }
 
-        for i in 0..(height - 1) {
-            // println!("{}", i);
-            self.current_configuration = self.get_next_configuration();
-            self.universe.push(self.current_configuration.clone());
-            // println!{"{}", self};
+    pub fn set_value(&mut self, row_index : u32, column_index : u32, value : u8) {
+        self.universe[(row_index * self.width + column_index) as usize] = value;
+    }
+
+    fn increase_generation(&mut self, row_index : u32) {
+        for cell_index in 0..(self.width) {
+            // we look behind to the previous row to generate this row
+            let radius : u8 = self.get_radius(row_index - 1, cell_index);
+            let new_bit : u8 = self.rule_lookup(radius);
+            self.set_value(row_index, cell_index, new_bit);
         }
+    }
+
+    pub fn generate(&mut self) {
+        for row_index in 1..self.height {
+            self.increase_generation(row_index);
+        }
+    }
+
+    fn get_radius(&self, row_index : u32, column_index : u32) -> u8 {
+
+         let is_periodic : bool = false; // todo : eventually pass through
+
+         let mut a : u8 = self.get_value(row_index, (column_index + self.width - 1) % self.width);
+         let b : u8 = self.get_value(row_index, column_index);
+         let mut c : u8 = self.get_value(row_index, (column_index + 1) % self.width);
+
+         if is_periodic == false {
+             if (column_index + self.width - 1) % self.width == 0 {
+                 a = (a ^ a) & 1;
+             }
+             if (column_index + 1) % self.width == self.width - 1 {
+                 c = (c ^ c) & 1;
+             }
+         }
+
+         return a << 2 | b << 1 | c; // the new rule, as a number
+    }
+
+    fn rule_lookup(&self, rule : u8) -> u8{
+        return (self.rule & (1 << rule)) >> rule; // todo : maybe rename rule to shift
+    }
+
+    fn get_universe_str(&self) -> String {
+        let mut universe = String::new();
+
+        for (index, cell) in self.universe.iter().enumerate() {
+            universe.push_str(&cell.to_string());
+            if index % self.width as usize == 0 {
+                universe.push('\n');
+            }
+        }
+
+        return universe;
+    }
+
+    pub fn get_flattened_universe(&self) -> Vec<u8> {
+        let mut universe : Vec<u8> = Vec::new();
+
+        for cell in &self.universe {
+            if *cell == 0 {
+                universe.push(0xff);
+                universe.push(0xff);
+                universe.push(0xff);
+                universe.push(0xff);
+            } else {
+                universe.push(0);
+                universe.push(0);
+                universe.push(0);
+                universe.push(0xff);
+            }
+        }
+        return universe;
+    }
+
+    pub fn generate_connected_components(&self) {
+
     }
 
     pub fn save_to_csv(&self) -> Result<(), Box<dyn std::error::Error>>{
@@ -83,23 +161,22 @@ impl ECA {
 
         let mut universe_as_string : String = String::new();
 
-        for configuration in &self.universe {
-            for (index, cell) in configuration.iter().enumerate() {
-                if *cell == 1 {
-                    universe_as_string.push('1');
-                    // println!("cell : {}", 1);
-                } else {
-                    universe_as_string.push('0');
-                    // println!("cell : {}", 0);
-                }
+        for (index, cell) in self.universe.iter().enumerate() {
+            if *cell == 1 {
+                universe_as_string.push('1');
+                // println!("cell : {}", 1);
+            } else {
+                universe_as_string.push('0');
+                // println!("cell : {}", 0);
+            }
 
-                if index == (self.width - 1) as usize {
-                    universe_as_string.push('\n');
-                } else {
-                    universe_as_string.push(',');
-                }
+            if index % self.width as usize == (self.width - 1) as usize {
+                universe_as_string.push('\n');
+            } else {
+                universe_as_string.push(',');
             }
         }
+
 
         // println!("{}", universe_as_string);
         std::fs::write(csv_filename, universe_as_string).unwrap();
@@ -108,98 +185,15 @@ impl ECA {
     }
 
     pub fn reset(&mut self) {
-        self.universe =  Vec::new();
-        self.current_configuration = self.initial_configuration.clone();
-    }
+        // initialize universe with initial configuration
+        let mut universe : Vec<u8> = vec![0; (self.width * self.height) as usize];
 
-    fn get_current_configuration(&self) -> String {
-        let mut configuration = String::new();
-
-        for cell in &self.current_configuration {
-            configuration.push_str(&cell.to_string());
+        for (index, cell) in self.initial_configuration.iter().enumerate() {
+            universe[index] = *cell;
         }
 
-        return configuration;
+        self.universe = universe;
     }
-
-    pub fn get_flattened_universe(&self) -> Vec<u8> {
-        let mut universe : Vec<u8> = Vec::new();
-
-        for row in &self.universe {
-            for cell in row {
-                if *cell == 0 {
-                    universe.push(0xff);
-                    universe.push(0xff);
-                    universe.push(0xff);
-                    universe.push(0xff);
-                } else {
-                    universe.push(0);
-                    universe.push(0);
-                    universe.push(0);
-                    universe.push(0xff);
-                }
-            }
-        }
-
-        return universe;
-    }
-
-    pub fn generate_connected_components(&self) {
-
-    }
-
-    fn rule_lookup(&self, a : u8, b : u8, c : u8) -> u8 {
-        let mask_bit : u8 = a << 2 | b << 1 | c;
-        // println!{"a {}, b {}, c {}, bit_mask : {}", a, b, c, mask_bit};
-        return (self.rule & (1 << mask_bit)) >> mask_bit;
-    }
-
-    fn get_next_configuration(&self) -> Vec<u8> {
-        let mut next_configuration : Vec<u8> = vec![0; self.width as usize];
-
-        let boundary_is_periodic : bool = false;
-
-        for (index, state) in self.current_configuration.iter().enumerate() {
-            let next_state : u8;
-
-            if index == 0 {
-                // println!("index = 0");
-                next_state = self.rule_lookup(
-                    if boundary_is_periodic
-                    {
-                        self.current_configuration[(self.width - 1) as usize]
-                    } else {
-                        0
-                    },
-                    self.current_configuration[0],
-                    self.current_configuration[1]
-                );
-            } else if index == (self.width - 1) as usize {
-                // println!("index = width - 1");
-                next_state = self.rule_lookup(
-                    self.current_configuration[(self.width - 2) as usize],
-                    self.current_configuration[(self.width - 1) as usize],
-                    if boundary_is_periodic {
-                        self.current_configuration[0]
-                    } else {
-                        0
-                    }
-                )
-            } else {
-                next_state = self.rule_lookup(
-                    self.current_configuration[index - 1],
-                    self.current_configuration[index],
-                    self.current_configuration[index + 1]
-                );
-            }
-            next_configuration[index] = next_state;
-
-            // println!("{}, {}", index, state);
-        }
-
-        return next_configuration;
-    }
-
 
 }
 
@@ -210,7 +204,7 @@ impl fmt::Display for ECA {
         // stream: `f`. Returns `fmt::Result` which indicates whether the
         // operation succeeded or failed. Note that `write!` uses syntax which
         // is very similar to `println!`.
-        return write!(f, "Rule : {} | current_configuration : {} ", self.rule, self.get_current_configuration());
+        return write!(f, "Rule : {} | universe : \n{} ", self.rule, self.get_universe_str());
     }
 }
 
@@ -230,7 +224,8 @@ fn generate_rule(rule : u8, width : u32, height : u32, generate_csv : bool, gene
     let filename = format!("./rule{}length{}.png", &rule.to_string(), &width.to_string());
 
     let mut automata = ECA::new(rule as u8, width, height);
-    automata.generate(height);
+    automata.generate();
+    // println!("{}", automata);
 
     if generate_images {
         let buffer = automata.get_flattened_universe();
@@ -270,7 +265,7 @@ fn main() {
     let generate_csv : bool = false;
     let generate_images : bool = true;
     let resize : bool = false;
-    let connected_component_labelling : bool = true;
+    let connected_component_labelling : bool = false;
 
     generate_all_rules(width, height, generate_csv, generate_images, resize, connected_component_labelling);
 
